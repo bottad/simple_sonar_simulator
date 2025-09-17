@@ -11,11 +11,11 @@ This is a **simplified 3D sonar simulator** that casts rays into a 3D scene (usi
 - Trajectory-based simulation from start to end pose
 - Outputs both `.png` images and a CSV log with poses
 - Uses `trimesh` for geometry and ray intersection
-- Extremely simplified — **see limitations**
+- Extremely simplified — [**see limitations**](#simplifications-and-limitations)
 
 ---
 
-## 📚 Contents
+## Contents
 
 - [Installation](#installation)
 - [Running the Simulation](#running-the-simulation)
@@ -26,11 +26,11 @@ This is a **simplified 3D sonar simulator** that casts rays into a 3D scene (usi
   - [`scene_file.ply`](#4-scene_fileply)
 - [Output](#output)
 - [Project Structure](#project-structure)
-- [⚠️ Simplifications & Limitations](#️-simplifications--limitations)
+- [⚠️ Simplifications & Limitations](#simplifications-and-limitations)
 
 ---
 
-## 🛠️ Installation
+## Installation
 
 Recommended: use a Python virtual environment.
 
@@ -153,7 +153,7 @@ simple_sonar_simulator/
 ```
 ---
 
-## ⚠️ Simplifications & Limitations
+## Simplifications and Limitations
 
 > **This sonar simulator is intentionally simplified.**
 
