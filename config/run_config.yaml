@@ -1,0 +1,8 @@
+# Run Configuration
+name: "test_run"
+
+trajectory_file: "config/trajectory.yaml"
+sonar_config_file: "config/sonar_config.yaml"
+scene_file: "scenes/test.ply"
+
+output_folder: "output/"

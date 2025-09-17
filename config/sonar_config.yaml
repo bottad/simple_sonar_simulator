@@ -1,0 +1,8 @@
+# Sonar Configuration
+
+v_fov: 20.0            # vertical field of view in degrees
+h_fov: 130.0           # horizontal field of view in degrees
+max_range: 20.0        # max sonar range in meters
+azimuth_bins: 512      # number of azimuth bins (columns)
+range_bins: 512        # number of range bins (rows)
+elevation_bins: 64     # number of elevation bins (layers)
