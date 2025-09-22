@@ -8,20 +8,35 @@ from trimesh.ray.ray_triangle import RayMeshIntersector
 
 from .data_classes import SonarConfig
 
-def save_image_as_png(image: np.ndarray, output_path: str):
+def save_image_as_png(image: np.ndarray, output_path: str, normalize: bool):
     """
     Save a sonar image to disk as an 8-bit grayscale PNG.
 
-    If values are outside [0, 1], a warning is printed and the image is normalized
-    by dividing by its maximum value before scaling to 0–255.
+    Parameters:
+        image (np.ndarray): Input image as a 2D NumPy array.
+        output_path (str): Path to save the output PNG file.
+        normalize (bool): Whether to normalize the image to [0, 1] before saving.
+
+    Behavior:
+        - If `normalize` is True, the image is scaled by dividing by its maximum value,
+          unless the maximum is 0, in which case normalization is skipped.
+        - If `normalize` is False and image values are outside [0, 1], a warning is printed
+          and normalization is still applied (unless max is 0).
+        - The resulting image is converted to 8-bit grayscale and saved as a PNG.
     """
-    if not ((0.0 <= image).all() and (image <= 1.0).all()):
-        print(f"[save_image_as_png]  Warning: Image values outside [0, 1]. Applying normalization.")
-        image = image / image.max()  # Normalize to [0, 1]
+    needs_normalization = not ((0.0 <= image).all() and (image <= 1.0).all())
+    max_val = image.max()
+
+    if normalize or needs_normalization:
+        if max_val > 0:
+            if needs_normalization:
+                print(f"[save_image_as_png]  Warning: Image values outside [0, 1]. Forcing normalization.")
+            image = image / max_val
 
     img_uint8 = (255 * image).astype(np.uint8)
     img = Image.fromarray(img_uint8, mode='L')  # 'L' = 8-bit grayscale
     img.save(output_path)
+
 
 class SonarSimulator:
     def __init__(self, config: SonarConfig, mesh: trimesh.Trimesh):
@@ -33,7 +48,7 @@ class SonarSimulator:
         else:
             self.intersector = RayMeshIntersector(mesh)
 
-    def run_simulation(self, poses, output_folder, run_name="sonar"):
+    def run_simulation(self, poses, output_folder, run_name="sonar", normalize=False):
         os.makedirs(output_folder, exist_ok=True)
 
         # Print sonar configuration
@@ -57,7 +72,7 @@ class SonarSimulator:
                 # Save image
                 image_filename = f"{run_name}_image_{idx:04d}.png"
                 image_path = os.path.join(output_folder, image_filename)
-                save_image_as_png(sonar_image, image_path)
+                save_image_as_png(sonar_image, image_path, normalize)
 
                 # Write pose to CSV
                 flat_pose = pose.flatten().tolist()

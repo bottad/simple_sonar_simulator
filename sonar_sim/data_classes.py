@@ -5,6 +5,7 @@ from dataclasses import dataclass
 @dataclass
 class RunConfig:
     name: str
+    normalize: bool
     trajectory_file: str
     sonar_config_file: str
     scene_file: str
@@ -18,13 +19,14 @@ class RunConfig:
         with open(path, 'r') as f:
             data = yaml.safe_load(f)
 
-        required_keys = ['name', 'trajectory_file', 'sonar_config_file', 'scene_file', 'output_folder']
+        required_keys = ['name', 'normalize', 'trajectory_file', 'sonar_config_file', 'scene_file', 'output_folder']
         for key in required_keys:
             if key not in data:
                 raise KeyError(f"[RunConfig]  Error: Missing required key '{key}' in run config YAML.")
 
         return cls(
             name=data['name'],
+            normalize=data['normalize'],
             trajectory_file=data['trajectory_file'],
             sonar_config_file=data['sonar_config_file'],
             scene_file=data['scene_file'],

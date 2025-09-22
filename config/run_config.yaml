@@ -1,5 +1,6 @@
 # Run Configuration
 name: "test_run"
+normalize: True
 
 trajectory_file: "config/trajectory.yaml"
 sonar_config_file: "config/sonar_config.yaml"

@@ -32,7 +32,7 @@ def main(run_config_filename: str):
     simulator = SonarSimulator(sonar_config, scene)
 
     # Run the simulation
-    simulator.run_simulation(poses, run_config.output_folder, run_config.name)
+    simulator.run_simulation(poses, run_config.output_folder, run_config.name, run_config.normalize)
     print(f"Simulation completed. Results saved to: {run_config.output_folder}")
 
 
