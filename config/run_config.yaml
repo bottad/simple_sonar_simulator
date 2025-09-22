@@ -1,8 +1,8 @@
 # Run Configuration
-name: "test_run"
+name: "test_run_2"
 normalize: True
 
-trajectory_file: "config/trajectory.yaml"
+trajectory_file: "config/vertical_pattern.yaml"
 sonar_config_file: "config/sonar_config.yaml"
 scene_file: "scenes/test.ply"
 

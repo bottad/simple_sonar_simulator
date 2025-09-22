@@ -1,0 +1,6 @@
+*
+!run_config.yaml
+!sonar_config.yaml
+!trajectory.yaml
+
+!.gitignore
