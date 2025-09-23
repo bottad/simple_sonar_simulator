@@ -5,6 +5,7 @@ import csv
 import trimesh
 # from trimesh.ray.ray_pyembree import RayMeshIntersector # pip install pyembree
 from trimesh.ray.ray_triangle import RayMeshIntersector
+from scipy.ndimage import gaussian_filter
 
 from .data_classes import SonarConfig
 
@@ -37,7 +38,6 @@ def save_image_as_png(image: np.ndarray, output_path: str, normalize: bool):
     img = Image.fromarray(img_uint8, mode='L')  # 'L' = 8-bit grayscale
     img.save(output_path)
 
-
 class SonarSimulator:
     def __init__(self, config: SonarConfig, mesh: trimesh.Trimesh):
         self.mesh = mesh
@@ -48,11 +48,11 @@ class SonarSimulator:
         else:
             self.intersector = RayMeshIntersector(mesh)
 
-    def run_simulation(self, poses, output_folder, run_name="sonar", normalize=False):
+    def run_simulation(self, poses, output_folder, run_name="sonar", normalize=False, smoothing_sigma=None):
         os.makedirs(output_folder, exist_ok=True)
 
         # Print sonar configuration
-        print("[SonarSimulator]  Info: Sonar configuration:")
+        print(f"[SonarSimulator]  Info: Sonar configuration: {self.config}")
         config_path = os.path.join(output_folder, f"{run_name}_sonar_config.yaml")
         self.config.write_config(config_path)
 
@@ -68,6 +68,10 @@ class SonarSimulator:
 
             for idx, pose in enumerate(poses):
                 sonar_image = self.compute_sonar_image(pose)
+
+                # apply smoothing
+                if smoothing_sigma is not None:
+                    sonar_image = gaussian_filter(sonar_image, sigma=smoothing_sigma)
 
                 # Save image
                 image_filename = f"{run_name}_image_{idx:04d}.png"
