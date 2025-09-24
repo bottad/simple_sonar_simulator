@@ -1,17 +1,20 @@
 # Simple Sonar Simulator
 
-This is a **simplified 3D sonar simulator** that casts rays into a 3D scene (using a triangle mesh) to generate synthetic sonar images. It is intended for testing and prototyping sonar-based perception pipelines.
+This is a **simplified 3D sonar simulator** that casts rays into a 3D mesh scene to generate synthetic sonar images. It is intended for testing and prototyping sonar-based perception pipelines and generating synthetic data under controlled conditions.
 
 ---
 
 ## Features
 
-- Simulates sonar images from 3D scenes (`.ply` files)
-- Configurable vertical/horizontal field of view, resolution, range
-- Trajectory-based simulation from start to end pose
-- Outputs both `.png` images and a CSV log with poses
-- Uses `trimesh` for geometry and ray intersection
-- Extremely simplified — [**see limitations**](#simplifications-and-limitations)
+- Simulates sonar images from 3D triangle meshes (`.ply`)
+- Configurable sonar parameters (FOV, resolution, range)
+- Supports keyframe-based trajectory definition and interpolation
+- Per-ray surface interaction using incident angle
+- Range- and angle-dependent return spreading across bins
+- Optional Gaussian smoothing and image normalization
+- Outputs PNG images and a CSV log of poses
+- Fast mesh intersection using `trimesh`
+- Simple and efficient — [**see limitations**](#simplifications-and-limitations)
 
 ---
 
@@ -48,62 +51,75 @@ pip install -r requirements.txt
 python run_simulation.py run_config.yaml
 ```
 
-The program will:
+The simulator will:
 
-* Load configuration
-* Load the scene mesh
+* Load mesh and configuration files
 * Interpolate poses along the trajectory
-* Simulate sonar returns
-* Save images + pose log
+* Simulate sonar returns using ray intersection
+* Save sonar images and log pose data
 
----
+> ⚠️ You **do not need to specify a full path** to the config file — the simulator assumes it is located in the `config/` folder.
+> Ensure that `run_config.yaml` (and all referenced paths inside it) are correctly placed in `config/`.
 
 ## Required Input Files
 
-All input files are referenced in a central `run_config.yaml` file (located in `/config/`).
+All input files are referenced in a central `run_config.yaml` file (located in `/config/`). This file also contains a few configuration options for the simulation itself.
 
-### 1. `run_config.yaml`
-Specifies paths to:
+### `run_config.yaml`
+
 ```yaml
 trajectory_file: config/trajectory.yaml
 sonar_config_file: config/sonar_config.yaml
 scene_file: scenes/example_scene.ply
 output_folder: output/
+name: sonar              # Optional name prefix for images and logs
+normalize: true          # Normalize sonar images to [0, 1] before saving
+smoothing_sigma: 1.0     # Apply optional Gaussian smoothing (set to null to disable)
 ```
 
-### 2. `trajectory.yaml`
+### `trajectory.yaml`
 
-Defines start & end poses (Euler angles + position), total time, and number of steps.
+Defines a keyframe-based trajectory with linear interpolation between poses.
 
 ```yaml
-start_pose:
-  position: [0, 0, 0]
-  rotation_euler: [0, 0, 0]  # Degrees
+poses:
+  - position: [0, 1, 0]
+    rotation_euler: [0, 0, 0]
+  - position: [0, 2, -1]
+    rotation_euler: [0, 0, 0]
+  ...
+  - position: [0, 3, -2]
+    rotation_euler: [0, 0, 0]
 
-end_pose:
-  position: [5, 0, 0]
-  rotation_euler: [0, 0, 0]
-
-total_time: 10.0
-timesteps: 100
+total_time: 10.0      # Duration in seconds
+timesteps: 40         # Number of interpolated steps
 ```
 
-### 3. `sonar_config.yaml`
+* `position`: XYZ in meters
+* `rotation_euler`: rotation in degrees (XYZ order)
+* Interpolation is linear in position and Euler angles
 
-Defines sonar parameters:
+### `sonar_config.yaml`
+
+Defines the sonar beam properties.
 
 ```yaml
-v_fov: 30            # Vertical field of view in degrees
-h_fov: 90            # Horizontal field of view in degrees
-max_range: 10.0      # Maximum range in meters
-azimuth_bins: 512
-range_bins: 256
-elevation_bins: 16
+v_fov: 30.0             # Vertical field of view in degrees
+h_fov: 90.0             # Horizontal field of view in degrees
+max_range: 10.0         # Maximum sensing range in meters
+
+azimuth_bins: 512       # Horizontal resolution (image width)
+range_bins: 256         # Range resolution (image height)
+elevation_bins: 16      # Vertical sampling rays (not rendered)
+
 ```
 
-### 4. `scene_file.ply`
+### `scene_file.ply`
 
-3D mesh of the environment (e.g., walls, terrain, etc.).
+A triangle mesh (`.ply`) defining the 3D scene geometry.
+
+* Must be a valid mesh (e.g., watertightness not required)
+* Units should match sonar configuration (meters)
 
 ---
 
@@ -118,6 +134,9 @@ The simulator will generate:
   sonar_image_0001.png
   ...
   ```
+  * Image dimensions: `(range_bins, azimuth_bins)`
+  * Optional smoothing via Gaussian filter
+  * Values normalized to `[0, 1]` if configured
 
 * A `poses.csv` file containing:
 
@@ -157,18 +176,20 @@ simple_sonar_simulator/
 
 > **This sonar simulator is intentionally simplified.**
 
-It is designed primarily for **educational use, algorithm prototyping**, or **synthetic data generation** under idealized assumptions. The following sonar effects are **not simulated**:
+It is designed primarily for **educational use, algorithm prototyping**, or **synthetic data generation** under idealized assumptions. The following sonar effects are:
 
-* ❌ **Surface reflectance** or material interaction
-* ❌ **Acoustic scattering models**
-* ❌ **Echo strength attenuation**
-* ❌ **Surface normal interaction**
-* ❌ **Beam patterns**, sound velocity, or environmental effects
-* ❌ **Multiple reflections**, reverberation, or noise
+### Not Simulated
 
-### Simulated:
+* ❌ Acoustic reflectance or material modeling
+* ❌ Signal attenuation over distance
+* ❌ Sound propagation, environmental effects, or noise
+* ❌ Multi-path reflections, reverberation
+* ❌ Beam patterns, sound speed gradients
 
-* ✔️ Ray-based first-return logic
-* ✔️ Configurable FOV, resolution, and max range
-* ✔️ Simple geometric intersection
-* ✔️ Consistent sonar image generation
+### Simulated
+
+* ✅ First-return ray intersection
+* ✅ Brightness scaling based on incident angle
+* ✅ Return spreading based on incident angle and range
+* ✅ Keyframe-based trajectory interpolation
+* ✅ Image output with optional smoothing and normalization
