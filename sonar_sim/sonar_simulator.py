@@ -42,6 +42,7 @@ class SonarSimulator:
     def __init__(self, config: SonarConfig, mesh: trimesh.Trimesh):
         self.mesh = mesh
         self.config = config
+        self.max_spread_bins = 7
         if mesh.is_empty or len(mesh.faces) == 0:
             print("[SonarSimulator]\tWarning: Empty mesh provided, raycasting disabled.")
             self.intersector = None
@@ -99,8 +100,7 @@ class SonarSimulator:
         sonar_image = np.zeros((config.range_bins, config.azimuth_bins), dtype=np.float32)
 
         if self.intersector is None:
-            # No mesh to intersect, return empty sonar image
-            return sonar_image
+            return sonar_image  # No mesh to intersect
 
         # Angular sampling
         azimuth_angles = np.linspace(
@@ -113,7 +113,7 @@ class SonarSimulator:
         azimuth_angles = np.radians(azimuth_angles)
         elevation_angles = np.radians(elevation_angles)
 
-        # Sensor position and rotation
+        # Sensor pose
         position = pose_matrix[:3, 3]
         rotation = pose_matrix[:3, :3]
 
@@ -122,7 +122,7 @@ class SonarSimulator:
 
         for az_idx, az in enumerate(azimuth_angles):
             for el_idx, el in enumerate(elevation_angles):
-                # Local ray direction in sensor frame (spherical to cartesian)
+                # Spherical to Cartesian (sensor local frame)
                 direction_local = np.array([
                     np.cos(el) * np.cos(az),
                     np.cos(el) * np.sin(az),
@@ -136,28 +136,52 @@ class SonarSimulator:
         rays = np.stack(rays, axis=0)
         origins = np.tile(position, (rays.shape[0], 1))
 
-        # First intersection only
-        locations, index_ray, _ = self.intersector.intersects_location(
+        # Intersect rays with mesh
+        locations, index_ray, index_tri = self.intersector.intersects_location(
             ray_origins=origins,
             ray_directions=rays,
             multiple_hits=False
         )
 
         if len(index_ray) == 0:
-            return sonar_image  # No hits at all
+            return sonar_image  # No hits
 
-        # Distances to first hit
+        # Compute distances
         hit_vectors = locations - origins[index_ray]
         distances = np.linalg.norm(hit_vectors, axis=1)
+
+        # Get surface normals from mesh
+        normals = self.intersector.mesh.face_normals[index_tri]
+
+        # Normalize ray directions
+        ray_directions = rays[index_ray]
+        ray_directions /= np.linalg.norm(ray_directions, axis=1, keepdims=True)
+
+        # Incident angle (cosine)
+        cos_incident = np.einsum('ij,ij->i', -ray_directions, normals)
+        cos_incident = np.clip(cos_incident, 0.0, 1.0)
 
         for i, ray_i in enumerate(index_ray):
             az_idx, el_idx = ray_indices[ray_i]
             dist = distances[i]
 
             if dist <= config.max_range:
+                # Map distance to range bin
                 range_bin = int((dist / config.max_range) * config.range_bins)
-                if range_bin < config.range_bins:
-                    # NOTE: swapped indices: row = range_bin (height), col = az_idx (width)
-                    sonar_image[range_bin, az_idx] += 1.0 / config.elevation_bins
+                if range_bin >= config.range_bins:
+                    continue
+
+                # Intensity based on angle and vertical sampling
+                base_intensity = cos_incident[i] / config.elevation_bins
+
+                # Spread based on incident angle
+                spread_bins = int((1 - cos_incident[i]) * dist / self.config.max_range * self.max_spread_bins)
+
+                for offset in range(-spread_bins, spread_bins + 1):
+                    target_bin = range_bin + offset
+                    if 0 <= target_bin < config.range_bins:
+                        # Gaussian falloff for spreading
+                        falloff = np.exp(-0.5 * (offset / (spread_bins + 1e-5))**2)
+                        sonar_image[target_bin, az_idx] += base_intensity * falloff
 
         return sonar_image

@@ -1,7 +1,7 @@
 # Run Configuration
-name: "test_run"
+name: "test_2"
 normalize: True
-smoothing_sigma: 1.5
+smoothing_sigma: 0.8 # null or 0.0 for no smoothing
 
 trajectory_file: "config/trajectory_z.yaml"
 sonar_config_file: "config/sonar_config.yaml"
