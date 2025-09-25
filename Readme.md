@@ -48,7 +48,7 @@ pip install -r requirements.txt
 ## Running the Simulation
 
 ```bash
-python run_simulation.py run_config.yaml
+python run_simulation.py example_run_config.yaml
 ```
 
 The simulator will:
@@ -63,18 +63,18 @@ The simulator will:
 
 ## Required Input Files
 
-All input files are referenced in a central `run_config.yaml` file (located in `/config/`). This file also contains a few configuration options for the simulation itself.
+All input files are referenced in a central `run_config.yaml` file (located in `/config/`). This file also contains a few configuration options for the simulation itself. A full set of example files are provided within the repository. 
 
 ### `run_config.yaml`
 
 ```yaml
-trajectory_file: config/trajectory.yaml
-sonar_config_file: config/sonar_config.yaml
-scene_file: scenes/example_scene.ply
+trajectory_file: config/example_trajectory.yaml
+sonar_config_file: config/example_sonar_config.yaml
+scene_file: scenes/example.ply
 output_folder: output/
-name: sonar              # Optional name prefix for images and logs
+name: example            # Optional name prefix for images and logs
 normalize: true          # Normalize sonar images to [0, 1] before saving
-smoothing_sigma: 1.0     # Apply optional Gaussian smoothing (set to null to disable)
+smoothing_sigma: 0.8     # Apply optional Gaussian smoothing (set to null to disable)
 ```
 
 ### `trajectory.yaml`
@@ -89,7 +89,7 @@ poses:
     rotation_euler: [0, 0, 0]
   ...
   - position: [0, 3, -2]
-    rotation_euler: [0, 0, 0]
+    rotation_euler: [0, 20, 0]
 
 total_time: 10.0      # Duration in seconds
 timesteps: 40         # Number of interpolated steps
@@ -151,12 +151,12 @@ The simulator will generate:
 simple_sonar_simulator/
 │
 ├── config/
-│   ├── run_config.yaml
-│   ├── trajectory.yaml
-│   └── sonar_config.yaml
+│   ├── example_run_config.yaml
+│   ├── example_trajectory.yaml
+│   └── example_sonar_config.yaml
 │
 ├── scenes/
-│   └── example_scene.ply
+│   └── example.ply
 │
 ├── output/
 │
