@@ -158,7 +158,7 @@ class SonarSimulator:
         ray_directions /= np.linalg.norm(ray_directions, axis=1, keepdims=True)
 
         # Incident angle (cosine)
-        cos_incident = np.einsum('ij,ij->i', -ray_directions, normals)
+        cos_incident = np.abs(np.einsum('ij,ij->i', ray_directions, normals))
         cos_incident = np.clip(cos_incident, 0.0, 1.0)
 
         for i, ray_i in enumerate(index_ray):
