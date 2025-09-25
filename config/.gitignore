@@ -1,6 +1,6 @@
 *
-!run_config.yaml
-!sonar_config.yaml
-!trajectory.yaml
+!example_run_config.yaml
+!example_sonar_config.yaml
+!example_trajectory.yaml
 
 !.gitignore

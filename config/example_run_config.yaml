@@ -1,0 +1,10 @@
+# Run Configuration
+name: "example"
+normalize: True
+smoothing_sigma: 0.8 # null or 0.0 for no smoothing
+
+trajectory_file: "config/example_trajectory.yaml"
+sonar_config_file: "config/example_sonar_config.yaml"
+scene_file: "scenes/example.ply"
+
+output_folder: "output/"

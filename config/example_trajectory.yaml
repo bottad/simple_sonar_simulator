@@ -1,0 +1,10 @@
+# Multiple keyframes defining the trajectory
+poses:
+  - position: [0, 0, 0]        # x, y, z position in meters
+    rotation_euler: [0, 0, 0]  # roll, pitch, yaw in degrees
+
+  - position: [0, 0, -6]
+    rotation_euler: [0, 0, 0]
+
+total_time: 10.0
+timesteps: 20
