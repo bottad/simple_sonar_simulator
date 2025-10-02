@@ -3,8 +3,9 @@ import numpy as np
 from PIL import Image
 import csv
 import trimesh
-# from trimesh.ray.ray_pyembree import RayMeshIntersector # pip install pyembree
-from trimesh.ray.ray_triangle import RayMeshIntersector
+from typing import Tuple, List
+from trimesh.ray.ray_pyembree import RayMeshIntersector # pip install pyembree
+# from trimesh.ray.ray_triangle import RayMeshIntersector
 from scipy.ndimage import gaussian_filter
 
 from .data_classes import SonarConfig
@@ -43,14 +44,17 @@ class SonarSimulator:
         self.mesh = mesh
         self.config = config
         self.max_spread_bins = 7
+        self.incident_dependency = False
         if mesh.is_empty or len(mesh.faces) == 0:
             print("[SonarSimulator]\tWarning: Empty mesh provided, raycasting disabled.")
             self.intersector = None
         else:
             self.intersector = RayMeshIntersector(mesh)
 
-    def run_simulation(self, poses, output_folder, run_name="sonar", normalize=False, smoothing_sigma=None):
+    def run_simulation(self, poses, output_folder, run_name="sonar", normalize=False, incident_dependency=False, smoothing_sigma=None):
         os.makedirs(output_folder, exist_ok=True)
+
+        self.incident_dependency = incident_dependency
 
         # Print sonar configuration
         print(f"[SonarSimulator]  Info: Sonar configuration: {self.config}")
@@ -92,72 +96,27 @@ class SonarSimulator:
     def compute_sonar_image(self, pose_matrix: np.ndarray) -> np.ndarray:
         """
         Simulate a sonar image from the given 4x4 pose matrix.
-
-        Returns an image with shape (range_bins, azimuth_bins),
-        where height = range and width = azimuth.
+        Returns an image with shape (range_bins, azimuth_bins).
         """
         config = self.config
         sonar_image = np.zeros((config.range_bins, config.azimuth_bins), dtype=np.float32)
 
         if self.intersector is None:
-            return sonar_image  # No mesh to intersect
+            return sonar_image
 
-        # Angular sampling
-        azimuth_angles = np.linspace(
-            -config.h_fov / 2, config.h_fov / 2, config.azimuth_bins, endpoint=False
-        )
-        elevation_angles = np.linspace(
-            -config.v_fov / 2, config.v_fov / 2, config.elevation_bins, endpoint=False
-        )
-
-        azimuth_angles = np.radians(azimuth_angles)
-        elevation_angles = np.radians(elevation_angles)
-
-        # Sensor pose
-        position = pose_matrix[:3, 3]
-        rotation = pose_matrix[:3, :3]
-
-        rays = []
-        ray_indices = []
-
-        for az_idx, az in enumerate(azimuth_angles):
-            for el_idx, el in enumerate(elevation_angles):
-                # Spherical to Cartesian (sensor local frame)
-                direction_local = np.array([
-                    np.cos(el) * np.cos(az),
-                    np.cos(el) * np.sin(az),
-                    np.sin(el)
-                ])
-                direction_world = rotation @ direction_local
-                rays.append(direction_world)
-                ray_indices.append((az_idx, el_idx))
-
-        # Cast rays
-        rays = np.stack(rays, axis=0)
-        origins = np.tile(position, (rays.shape[0], 1))
-
-        # Intersect rays with mesh
-        locations, index_ray, index_tri = self.intersector.intersects_location(
-            ray_origins=origins,
-            ray_directions=rays,
-            multiple_hits=False
-        )
+        origins, rays, ray_indices = self._generate_rays(pose_matrix)
+        locations, index_ray, index_tri = self._intersect_rays(origins, rays)
 
         if len(index_ray) == 0:
-            return sonar_image  # No hits
+            return sonar_image
 
-        # Compute distances
         hit_vectors = locations - origins[index_ray]
         distances = np.linalg.norm(hit_vectors, axis=1)
 
-        # Get surface normals from mesh
         normals = self.intersector.mesh.face_normals[index_tri]
-
-        # Normalize ray directions
         ray_directions = rays[index_ray]
         ray_directions /= np.linalg.norm(ray_directions, axis=1, keepdims=True)
 
-        # Incident angle (cosine)
         cos_incident = np.abs(np.einsum('ij,ij->i', ray_directions, normals))
         cos_incident = np.clip(cos_incident, 0.0, 1.0)
 
@@ -165,23 +124,81 @@ class SonarSimulator:
             az_idx, el_idx = ray_indices[ray_i]
             dist = distances[i]
 
-            if dist <= config.max_range:
-                # Map distance to range bin
-                range_bin = int((dist / config.max_range) * config.range_bins)
-                if range_bin >= config.range_bins:
-                    continue
+            if dist > config.max_range:
+                continue
 
-                # Intensity based on angle and vertical sampling
+            range_bin = int((dist / config.max_range) * config.range_bins)
+            if range_bin >= config.range_bins:
+                continue
+
+            if self.incident_dependency:
                 base_intensity = cos_incident[i] / config.elevation_bins
+            else:
+                base_intensity = 1.0 / config.elevation_bins
 
-                # Spread based on incident angle
-                spread_bins = int((1 - cos_incident[i]) * dist / self.config.max_range * self.max_spread_bins)
+            spread_bins = int((1 - cos_incident[i]) * dist / config.max_range * self.max_spread_bins)
 
-                for offset in range(-spread_bins, spread_bins + 1):
-                    target_bin = range_bin + offset
-                    if 0 <= target_bin < config.range_bins:
-                        # Gaussian falloff for spreading
-                        falloff = np.exp(-0.5 * (offset / (spread_bins + 1e-5))**2)
-                        sonar_image[target_bin, az_idx] += base_intensity * falloff
+            self._spread_intensity(sonar_image, az_idx, range_bin, base_intensity, spread_bins)
 
         return sonar_image
+
+    def _generate_rays(self, pose_matrix: np.ndarray) -> Tuple[np.ndarray, np.ndarray, List[Tuple[int, int]]]:
+        """
+        Generate ray origins and directions in world space.
+        Returns:
+            - origins: (N, 3)
+            - directions: (N, 3)
+            - ray_indices: mapping to (azimuth_idx, elevation_idx)
+        """
+        config = self.config
+        az = np.radians(np.linspace(-config.h_fov / 2, config.h_fov / 2, config.azimuth_bins, endpoint=False))
+        el = np.radians(np.linspace(-config.v_fov / 2, config.v_fov / 2, config.elevation_bins, endpoint=False))
+        az_grid, el_grid = np.meshgrid(az, el, indexing='ij')
+
+        x = np.cos(el_grid) * np.cos(az_grid)
+        y = np.cos(el_grid) * np.sin(az_grid)
+        z = np.sin(el_grid)
+
+        directions_local = np.stack([x, y, z], axis=-1).reshape(-1, 3)
+        rotation = pose_matrix[:3, :3]
+        directions_world = directions_local @ rotation.T
+
+        position = pose_matrix[:3, 3]
+        origins = np.tile(position, (directions_world.shape[0], 1))
+
+        # Generate az/el indices
+        ray_indices = [(i, j) for i in range(config.azimuth_bins) for j in range(config.elevation_bins)]
+        return origins, directions_world, ray_indices
+
+
+    def _intersect_rays(self, origins: np.ndarray, directions: np.ndarray):
+        """
+        Intersect rays with the mesh.
+        Returns:
+            - hit_locations
+            - hit_ray_indices
+            - hit_face_indices
+        """
+        return self.intersector.intersects_location(
+            ray_origins=origins,
+            ray_directions=directions,
+            multiple_hits=False
+        )
+
+    def _spread_intensity(self, sonar_image, az_idx, range_bin, base_intensity, spread_bins):
+        """
+        Spread intensity across nearby range bins using normalized Gaussian falloff.
+        """
+        if spread_bins == 0:
+            if 0 <= range_bin < self.config.range_bins:
+                sonar_image[range_bin, az_idx] += base_intensity
+            return
+
+        offsets = np.arange(-spread_bins, spread_bins + 1)
+        falloffs = np.exp(-0.5 * (offsets / (spread_bins + 1e-5))**2)
+        falloffs /= np.sum(falloffs)  # Normalize
+
+        for offset, falloff in zip(offsets, falloffs):
+            target_bin = range_bin + offset
+            if 0 <= target_bin < self.config.range_bins:
+                sonar_image[target_bin, az_idx] += base_intensity * falloff

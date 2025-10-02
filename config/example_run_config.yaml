@@ -1,6 +1,7 @@
 # Run Configuration
 name: "example"
 normalize: True
+incident_dependency: False
 smoothing_sigma: 0.8 # null or 0.0 for no smoothing
 
 trajectory_file: "config/example_trajectory.yaml"
