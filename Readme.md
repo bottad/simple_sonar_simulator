@@ -161,11 +161,16 @@ simple_sonar_simulator/
 ├── output/
 │
 ├── sonar_sim/
+│   ├── __init__.py
 │   ├── sonar_simulator.py
 │   ├── data_classes.py
 │   ├── trajectory_loader.py
 │   ├── config_loader.py
 │   └── scene_loader.py
+│
+├── tests/
+│   ├── __init__.py
+│   └── test_sonar_interpolation.py
 │
 ├── run_simulation.py
 └── requirements.txt

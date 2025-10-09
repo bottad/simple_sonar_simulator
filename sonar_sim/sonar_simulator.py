@@ -20,20 +20,18 @@ def save_image_as_png(image: np.ndarray, output_path: str, normalize: bool):
         normalize (bool): Whether to normalize the image to [0, 1] before saving.
 
     Behavior:
+        - Image is clipped to [0, 1] before any further processing.
         - If `normalize` is True, the image is scaled by dividing by its maximum value,
           unless the maximum is 0, in which case normalization is skipped.
         - If `normalize` is False and image values are outside [0, 1], a warning is printed
           and normalization is still applied (unless max is 0).
         - The resulting image is converted to 8-bit grayscale and saved as a PNG.
     """
-    needs_normalization = not ((0.0 <= image).all() and (image <= 1.0).all())
+    # image = np.clip(image, 0.0, 1.0)
     max_val = image.max()
 
-    if normalize or needs_normalization:
-        if max_val > 0:
-            if needs_normalization:
-                print(f"[save_image_as_png]  Warning: Image values outside [0, 1]. Forcing normalization.")
-            image = image / max_val
+    if normalize and max_val > 0:
+        image = image / max_val
 
     img_uint8 = (255 * image).astype(np.uint8)
     img = Image.fromarray(img_uint8, mode='L')  # 'L' = 8-bit grayscale
@@ -104,86 +102,107 @@ class SonarSimulator:
         if self.intersector is None:
             return sonar_image
 
-        origins, rays, ray_indices = self._generate_rays(pose_matrix)
-        locations, index_ray, index_tri = self._intersect_rays(origins, rays)
+        for az_idx in range(config.azimuth_bins):
+            origins, directions, ray_indices = self._generate_rays(az_idx, pose_matrix)
+            distances, index_ray, locations, index_tri = self._intersect_rays(origins, directions)
 
-        if len(index_ray) == 0:
-            return sonar_image
-
-        hit_vectors = locations - origins[index_ray]
-        distances = np.linalg.norm(hit_vectors, axis=1)
-
-        normals = self.intersector.mesh.face_normals[index_tri]
-        ray_directions = rays[index_ray]
-        ray_directions /= np.linalg.norm(ray_directions, axis=1, keepdims=True)
-
-        cos_incident = np.abs(np.einsum('ij,ij->i', ray_directions, normals))
-        cos_incident = np.clip(cos_incident, 0.0, 1.0)
-
-        for i, ray_i in enumerate(index_ray):
-            az_idx, el_idx = ray_indices[ray_i]
-            dist = distances[i]
-
-            if dist > config.max_range:
+            if len(index_ray) == 0:
                 continue
 
-            range_bin = int((dist / config.max_range) * config.range_bins)
-            if range_bin >= config.range_bins:
-                continue
+            normals = self.intersector.mesh.face_normals[index_tri]
+            ray_dirs = directions[index_ray]
+            cos_incident = np.abs(np.einsum('ij,ij->i', ray_dirs, normals))
+            cos_incident = np.clip(cos_incident, 0.0, 1.0)
 
-            if self.incident_dependency:
-                base_intensity = cos_incident[i] / config.elevation_bins
-            else:
-                base_intensity = 1.0 / config.elevation_bins
+            last_hit_ray_idx = None
+            last_hit_range_bin = None
+            last_intensity = None
 
-            spread_bins = int((1 - cos_incident[i]) * dist / config.max_range * self.max_spread_bins)
+            for i, ray_i in enumerate(index_ray):
+                range_bin = int(round((distances[i] / config.max_range) * config.range_bins))
+                if not (0 <= range_bin < config.range_bins):
+                    continue
 
-            self._spread_intensity(sonar_image, az_idx, range_bin, base_intensity, spread_bins)
+                # Compute intensity for this hit
+                intensity = (cos_incident[i] if self.incident_dependency else 1.0)
+                sonar_image[range_bin, az_idx] += intensity
+
+                if last_hit_ray_idx is not None and ray_i == last_hit_ray_idx + 1:
+                    start_bin = last_hit_range_bin
+                    end_bin = range_bin
+
+                    if end_bin - start_bin > 1:
+                        # Interpolate between last and current intensity, excluding endpoints
+                        interp_values = np.linspace(last_intensity, intensity, end_bin - start_bin + 1)[1:-1]
+                        for j, val in enumerate(interp_values, start=start_bin + 1):
+                            sonar_image[j, az_idx] += val
+
+                last_hit_ray_idx = ray_i
+                last_hit_range_bin = range_bin
+                last_intensity = intensity
 
         return sonar_image
 
-    def _generate_rays(self, pose_matrix: np.ndarray) -> Tuple[np.ndarray, np.ndarray, List[Tuple[int, int]]]:
+    def _generate_rays(self, az_idx: int, pose_matrix: np.ndarray) -> Tuple[np.ndarray, np.ndarray, List[Tuple[int, int]]]:
         """
-        Generate ray origins and directions in world space.
+        Generate all rays for a single azimuth index (i.e., a vertical column).
         Returns:
-            - origins: (N, 3)
-            - directions: (N, 3)
-            - ray_indices: mapping to (azimuth_idx, elevation_idx)
+            - origins: (E, 3)
+            - directions: (E, 3)
+            - ray_indices: List of (az_idx, el_idx)
         """
         config = self.config
-        az = np.radians(np.linspace(-config.h_fov / 2, config.h_fov / 2, config.azimuth_bins, endpoint=False))
+        az = np.radians(-config.h_fov / 2 + (az_idx + 0.5) * config.h_fov / config.azimuth_bins)
         el = np.radians(np.linspace(-config.v_fov / 2, config.v_fov / 2, config.elevation_bins, endpoint=False))
-        az_grid, el_grid = np.meshgrid(az, el, indexing='ij')
 
-        x = np.cos(el_grid) * np.cos(az_grid)
-        y = np.cos(el_grid) * np.sin(az_grid)
-        z = np.sin(el_grid)
+        x = np.cos(el) * np.cos(az)
+        y = np.cos(el) * np.sin(az)
+        z = np.sin(el)
 
-        directions_local = np.stack([x, y, z], axis=-1).reshape(-1, 3)
+        directions_local = np.stack([x, y, z], axis=-1)  # (E, 3)
         rotation = pose_matrix[:3, :3]
         directions_world = directions_local @ rotation.T
 
-        position = pose_matrix[:3, 3]
-        origins = np.tile(position, (directions_world.shape[0], 1))
+        origin = pose_matrix[:3, 3]
+        origins = np.tile(origin, (config.elevation_bins, 1))
 
-        # Generate az/el indices
-        ray_indices = [(i, j) for i in range(config.azimuth_bins) for j in range(config.elevation_bins)]
+        ray_indices = [(az_idx, el_idx) for el_idx in range(config.elevation_bins)]
+
         return origins, directions_world, ray_indices
-
 
     def _intersect_rays(self, origins: np.ndarray, directions: np.ndarray):
         """
-        Intersect rays with the mesh.
+        Intersect rays with the mesh and return information only for hits
+        within the configured max_range.
+
+        Args:
+            origins (np.ndarray): Array of shape (N, 3) representing ray origins.
+            directions (np.ndarray): Array of shape (N, 3) representing normalized ray directions.
+
         Returns:
-            - hit_locations
-            - hit_ray_indices
-            - hit_face_indices
+            distances (np.ndarray): Distances from ray origins to intersection points (filtered by max_range).
+            hit_ray_indices (np.ndarray): Indices of the rays that hit the mesh.
+            hit_locations (np.ndarray): Intersection points on the mesh surface.
+            hit_face_indices (np.ndarray): Indices of mesh faces that were hit.
         """
-        return self.intersector.intersects_location(
+        locations, index_ray, index_tri = self.intersector.intersects_location(
             ray_origins=origins,
             ray_directions=directions,
             multiple_hits=False
         )
+
+        if len(index_ray) == 0:
+            empty = np.empty(0)
+            empty_int = np.empty(0, dtype=int)
+            return empty, empty_int, empty.reshape((0, 3)), empty_int
+
+        # Compute distances from ray origins to intersection points
+        distances = np.linalg.norm(locations - origins[index_ray], axis=1)
+
+        # Keep only hits within max range
+        valid = distances <= self.config.max_range
+
+        return distances[valid], index_ray[valid], locations[valid], index_tri[valid]
 
     def _spread_intensity(self, sonar_image, az_idx, range_bin, base_intensity, spread_bins):
         """

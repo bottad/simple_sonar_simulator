@@ -4,5 +4,6 @@ pyyaml
 scipy
 Pillow
 rtree
-csv
 pyembree
+pytest
+matplotlib
