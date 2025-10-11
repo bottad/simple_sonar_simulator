@@ -3,6 +3,7 @@ import numpy as np
 from PIL import Image
 import csv
 import trimesh
+import itertools
 from typing import Tuple, List
 from trimesh.ray.ray_pyembree import RayMeshIntersector # pip install pyembree
 # from trimesh.ray.ray_triangle import RayMeshIntersector
@@ -42,17 +43,14 @@ class SonarSimulator:
         self.mesh = mesh
         self.config = config
         self.max_spread_bins = 7
-        self.incident_dependency = False
         if mesh.is_empty or len(mesh.faces) == 0:
             print("[SonarSimulator]\tWarning: Empty mesh provided, raycasting disabled.")
             self.intersector = None
         else:
             self.intersector = RayMeshIntersector(mesh)
 
-    def run_simulation(self, poses, output_folder, run_name="sonar", normalize=False, incident_dependency=False, smoothing_sigma=None):
+    def run_simulation(self, poses, output_folder, run_name="sonar", normalize=False, smoothing_sigma=None):
         os.makedirs(output_folder, exist_ok=True)
-
-        self.incident_dependency = incident_dependency
 
         # Print sonar configuration
         print(f"[SonarSimulator]  Info: Sonar configuration: {self.config}")
@@ -108,38 +106,11 @@ class SonarSimulator:
 
             if len(index_ray) == 0:
                 continue
+            
+            ranges = np.round((distances / config.max_range) * config.range_bins).astype(int)
 
-            normals = self.intersector.mesh.face_normals[index_tri]
-            ray_dirs = directions[index_ray]
-            cos_incident = np.abs(np.einsum('ij,ij->i', ray_dirs, normals))
-            cos_incident = np.clip(cos_incident, 0.0, 1.0)
-
-            last_hit_ray_idx = None
-            last_hit_range_bin = None
-            last_intensity = None
-
-            for i, ray_i in enumerate(index_ray):
-                range_bin = int(round((distances[i] / config.max_range) * config.range_bins))
-                if not (0 <= range_bin < config.range_bins):
-                    continue
-
-                # Compute intensity for this hit
-                intensity = (cos_incident[i] if self.incident_dependency else 1.0)
-                sonar_image[range_bin, az_idx] += intensity
-
-                if last_hit_ray_idx is not None and ray_i == last_hit_ray_idx + 1:
-                    start_bin = last_hit_range_bin
-                    end_bin = range_bin
-
-                    if end_bin - start_bin > 1:
-                        # Interpolate between last and current intensity, excluding endpoints
-                        interp_values = np.linspace(last_intensity, intensity, end_bin - start_bin + 1)[1:-1]
-                        for j, val in enumerate(interp_values, start=start_bin + 1):
-                            sonar_image[j, az_idx] += val
-
-                last_hit_ray_idx = ray_i
-                last_hit_range_bin = range_bin
-                last_intensity = intensity
+            
+            self._spread_intensity(ranges, index_ray, az_idx, sonar_image)
 
         return sonar_image
 
@@ -204,20 +175,51 @@ class SonarSimulator:
 
         return distances[valid], index_ray[valid], locations[valid], index_tri[valid]
 
-    def _spread_intensity(self, sonar_image, az_idx, range_bin, base_intensity, spread_bins):
+    def _spread_intensity(self, ranges, index_ray, azimuth_idx, sonar_image):
         """
-        Spread intensity across nearby range bins using normalized Gaussian falloff.
+        For each contiguous group of hit rays, fill the sonar image between each pair of hits
+        with equal intensity, so that the sum over each interval is 1.
+        Closer hits produce brighter bins, wider gaps produce dimmer bins.
         """
-        if spread_bins == 0:
-            if 0 <= range_bin < self.config.range_bins:
-                sonar_image[range_bin, az_idx] += base_intensity
+        if len(ranges) == 0 or len(index_ray) == 0:
             return
 
-        offsets = np.arange(-spread_bins, spread_bins + 1)
-        falloffs = np.exp(-0.5 * (offsets / (spread_bins + 1e-5))**2)
-        falloffs /= np.sum(falloffs)  # Normalize
+        # Sort by ray index to preserve order
+        sorted_indices = np.argsort(index_ray)
+        sorted_ranges = ranges[sorted_indices]
+        sorted_rays = index_ray[sorted_indices]
 
-        for offset, falloff in zip(offsets, falloffs):
-            target_bin = range_bin + offset
-            if 0 <= target_bin < self.config.range_bins:
-                sonar_image[target_bin, az_idx] += base_intensity * falloff
+        # Group consecutive ray indices
+        for _, group in itertools.groupby(enumerate(sorted_rays), lambda x: x[0] - x[1]):
+            group_indices = [x[0] for x in group]
+            group_ranges = sorted_ranges[group_indices]
+            if len(group_ranges) == 0:
+                continue
+
+            # Sort group_ranges for correct bin order
+            group_ranges = np.sort(group_ranges)
+            num_hits = len(group_ranges)
+
+            # For each pair of consecutive hits, spread intensity between them
+            for i in range(num_hits - 1):
+                start_bin = int(group_ranges[i])
+                end_bin = int(group_ranges[i + 1])
+                if end_bin < start_bin:
+                    start_bin, end_bin = end_bin, start_bin
+                gap = end_bin - start_bin
+                if gap == 0:
+                    # If two hits are in the same bin, just add intensity
+                    if 0 <= start_bin < self.config.range_bins:
+                        sonar_image[start_bin, azimuth_idx] = 1
+                    continue
+
+                intensity_per_bin = 1.0 / (gap + 1)
+                for r in range(start_bin, end_bin + 1):
+                    if 0 <= r < self.config.range_bins:
+                        sonar_image[r, azimuth_idx] = intensity_per_bin
+
+            # Optionally, add intensity for isolated hits (single hit in group)
+            if num_hits == 1:
+                single_bin = int(group_ranges[0])
+                if 0 <= single_bin < self.config.range_bins:
+                    sonar_image[single_bin, azimuth_idx] = 1
